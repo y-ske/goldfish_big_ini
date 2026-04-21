@@ -66,12 +66,25 @@ oks_Vt   = my_bibun(movmean(oks, 33), fs);
 %% ============================================================
 %% セット検出パラメータ  ← 必要に応じて変更
 %% ============================================================
-peaks_per_set   = 15;    % 1セット内の想定ピーク数
-min_set_gap_s   = 150;   % セット間ギャップ閾値 [s]
-min_peak_dist_s = 5;     % ピーク検出の最小間隔 [s]（セット内ピーク間）
-M               = 20;    % ブロックサイズ（セット数）  ← 10 に変更可
-pre_s           = 10;    % エポック前バッファ [s]
-post_s          = 250;   % エポック後バッファ [s]（15 ピーク全体をカバー）
+peaks_per_set   = 15;   % 1セット内の想定ピーク数
+min_set_gap_s   = 150;  % セット間ギャップ閾値 [s]
+min_peak_dist_s = 5;    % ピーク検出の最小間隔 [s]（セット内ピーク間）
+M               = 20;   % ブロックサイズ（セット数）  ← 10 に変更可
+
+%% ============================================================
+%% エポック窓パラメータ（刺激開始 t = 0 を基準）
+%%
+%%   t = 0          : 各セットの最初の OKS ピーク（= 視覚刺激開始）
+%%   t = -pre_s     : エポック開始（刺激開始の pre_s 秒前）
+%%   t = +post_s    : エポック終了（刺激開始の post_s 秒後）
+%%
+%%   post_s は「次セットの刺激開始時刻 + post_extra 秒」として
+%%   セット間隔から自動計算します．
+%%   手動で固定値を使いたい場合は post_s_manual に秒数を入れてください．
+%% ============================================================
+pre_s        = 10;   % 刺激開始の何秒前からエポックを切るか [s]
+post_extra   = 10;   % 次セットの刺激開始から何秒後まで含めるか [s]
+post_s_manual = [];  % [] = 自動計算 / 数値を入れると固定値 [s]
 
 %% ============================================================
 %% OKS ピーク検出（方向自動判定）
@@ -141,6 +154,35 @@ fprintf('\n有効セット数: %d / %d\n', n_sets, n_sets_raw);
 if n_sets == 0
     error('有効なセットが見つかりません。peaks_per_set と min_set_gap_s を確認してください。');
 end
+
+%% ============================================================
+%% セット間隔（onset-to-onset）から post_s を自動計算
+%% ============================================================
+if n_sets >= 2
+    inter_onset_s = diff(onset_valid) / fs;
+    iot_min    = min(inter_onset_s);
+    iot_median = median(inter_onset_s);
+    iot_max    = max(inter_onset_s);
+    fprintf('\nセット開始間隔 (onset-to-onset):\n');
+    fprintf('  min = %.1f s  /  median = %.1f s  /  max = %.1f s\n', ...
+        iot_min, iot_median, iot_max);
+else
+    iot_min = [];
+    fprintf('\nセット数が 1 のためセット間隔を計算できません。post_s_manual を指定してください。\n');
+end
+
+if ~isempty(post_s_manual)
+    post_s = post_s_manual;
+    fprintf('post_s: 手動設定 = %.1f s\n', post_s);
+elseif ~isempty(iot_min)
+    post_s = iot_min + post_extra;
+    fprintf('post_s: 自動設定 = min(onset間隔) + post_extra = %.1f + %.1f = %.1f s\n', ...
+        iot_min, post_extra, post_s);
+else
+    error('post_s を決定できません。post_s_manual に値を入れてください。');
+end
+
+fprintf('エポック窓: t = -%.1f s  ～  t = +%.1f s  (t=0 が刺激開始)\n', pre_s, post_s);
 
 %% ============================================================
 %% エポック切り出し
@@ -216,6 +258,10 @@ for b = 1:n_blocks
 
     yline(0, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8, 'HandleVisibility', 'off');
     xline(0, ':', 'Color', [0.20 0.20 0.20], 'LineWidth', 1.0, 'HandleVisibility', 'off');
+    if ~isempty(iot_min)
+        xline(iot_min, '--', 'Color', [0.55 0.20 0.20], 'LineWidth', 0.8, ...
+            'HandleVisibility', 'off');   % 次セット刺激開始
+    end
 
     b_start = (b-1)*M + 1;
     b_end   = min(b*M, n_sets);
@@ -255,10 +301,14 @@ end
 plot(t_epoch, add_ave_oks(:,1), 'k--', 'LineWidth', 1.0, 'DisplayName', 'OKS');
 yline(0, '-', 'Color', [0.7 0.7 0.7], 'LineWidth', 0.8, 'HandleVisibility', 'off');
 xline(0, ':',  'Color', [0.3 0.3 0.3], 'LineWidth', 1.0, 'HandleVisibility', 'off');
+if ~isempty(iot_min)
+    xline(iot_min, '--', 'Color', [0.55 0.20 0.20], 'LineWidth', 1.0, ...
+        'Label', '次セット開始', 'HandleVisibility', 'off');
+end
 
 xlabel('Time [s]', 'FontSize', 18);
 ylabel('Eye Vel. [deg/s]', 'FontSize', 18);
-title(sprintf('ブロック別加算平均  (M = %d sets/block)', M), 'FontSize', 18);
+title(sprintf('ブロック別加算平均  (M = %d sets/block)  |  t=0: 刺激開始', M), 'FontSize', 18);
 legend('Location', 'best', 'FontSize', 12);
 set(gca, 'FontSize', 16, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8);
 xlim([-pre_s, post_s]);
