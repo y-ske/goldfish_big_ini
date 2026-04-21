@@ -214,7 +214,11 @@ if n_blocks == 0
 end
 
 %% ============================================================
-%% 全ブロック一覧表示
+%% 全ブロック一覧表示（上段: 眼球速度，下段: 有効セット数/重み）
+%%
+%% tiledlayout は 2*nRow 行 × nCol 列
+%%   奇数行 = 加算平均（眼球速度 + OKS）
+%%   偶数行 = 重み（有効セット数の棒グラフ）
 %% ============================================================
 nCol     = min(4, n_blocks);
 nRow     = ceil(n_blocks / nCol);
@@ -222,16 +226,27 @@ cmap_fig = turbo(256);
 cmin_fig = 0;
 cmax_fig = M;
 
-fig1 = figure('Position', [50 50 min(1600, nCol*420) min(1000, nRow*340+120)]);
-tl1  = tiledlayout(nRow, nCol, 'TileSpacing', 'compact', 'Padding', 'compact');
-title(tl1, sprintf('OKS セット加算平均  (M = %d sets / block)', M), 'FontSize', 20);
+fig1 = figure('Position', [50 50 min(1600, nCol*420) min(1200, nRow*2*220+120)]);
+tl1  = tiledlayout(nRow*2, nCol, 'TileSpacing', 'compact', 'Padding', 'compact');
+title(tl1, sprintf('OKS セット加算平均  (M = %d sets / block)  |  t=0: 刺激開始', M), ...
+    'FontSize', 20);
 xlabel(tl1, 'Time [s]', 'FontSize', 20);
-ylabel(tl1, 'Eye Vel. [deg/s]', 'FontSize', 20);
 
 for b = 1:n_blocks
-    ax = nexttile; hold on;
+    col       = mod(b-1, nCol) + 1;
+    blk_row   = floor((b-1) / nCol);
+    sig_idx   =  2*blk_row    * nCol + col;   % 加算平均タイル番号
+    wgt_idx   = (2*blk_row+1) * nCol + col;   % 重みタイル番号
 
-    %% 個別セット散布
+    b_start = (b-1)*M + 1;
+    b_end   = min(b*M, n_sets);
+    n_vld   = n_valid_block(:, b);
+
+    %% ----------------------------------------------------------
+    %% 上段: 加算平均
+    %% ----------------------------------------------------------
+    ax_s = nexttile(sig_idx); hold on;
+
     Xb   = stats.blocks_sig{b};
     x_sc = repmat(t_epoch(:), 1, size(Xb, 2));
     vsc  = ~isnan(Xb);
@@ -241,18 +256,13 @@ for b = 1:n_blocks
         'MarkerEdgeAlpha', 0.15, ...
         'HandleVisibility', 'off');
 
-    %% OKS 参照信号
     plot(t_epoch, add_ave_oks(:,b), 'k', 'LineWidth', 0.8, 'DisplayName', 'OKS');
 
-    %% 加算平均（有効セット数でカラーマップ）
-    n_vld = n_valid_block(:,b);
     vline = ~isnan(t_epoch(:)) & ~isnan(add_ave(:,b));
-    x_vl  = t_epoch(vline);
-    y_vl  = add_ave(vline, b);
-    c_vl  = n_vld(vline);
-
-    surface([x_vl x_vl], [y_vl y_vl], zeros(sum(vline), 2), ...
-        [c_vl c_vl], ...
+    surface([t_epoch(vline) t_epoch(vline)], ...
+            [add_ave(vline,b) add_ave(vline,b)], ...
+            zeros(sum(vline), 2), ...
+            [n_vld(vline) n_vld(vline)], ...
         'FaceColor', 'none', 'EdgeColor', 'interp', 'LineWidth', 2.5, ...
         'DisplayName', '眼球速度');
 
@@ -260,26 +270,52 @@ for b = 1:n_blocks
     xline(0, ':', 'Color', [0.20 0.20 0.20], 'LineWidth', 1.0, 'HandleVisibility', 'off');
     if ~isempty(iot_min)
         xline(iot_min, '--', 'Color', [0.55 0.20 0.20], 'LineWidth', 0.8, ...
-            'HandleVisibility', 'off');   % 次セット刺激開始
+            'HandleVisibility', 'off');
     end
 
-    b_start = (b-1)*M + 1;
-    b_end   = min(b*M, n_sets);
     title(sprintf('Block %d  (sets %d – %d)', b, b_start, b_end), 'FontSize', 14);
-
-    colormap(ax, cmap_fig);
-    caxis(ax, [cmin_fig cmax_fig]);
-    set(ax, 'FontSize', 14, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8);
+    if col == 1, ylabel('Eye Vel. [deg/s]', 'FontSize', 12); end
+    colormap(ax_s, cmap_fig);
+    caxis(ax_s, [cmin_fig cmax_fig]);
+    set(ax_s, 'FontSize', 12, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8, ...
+        'XTickLabel', []);
     hold off;
+
+    %% ----------------------------------------------------------
+    %% 下段: 重み（有効セット数の棒グラフ）
+    %% ----------------------------------------------------------
+    ax_w = nexttile(wgt_idx); hold on;
+
+    idx_c = round(1 + (size(cmap_fig,1)-1) * (n_vld - cmin_fig) / (cmax_fig - cmin_fig));
+    idx_c = max(1, min(size(cmap_fig,1), idx_c));
+
+    bh = bar(t_epoch, n_vld, 1.0, 'FaceColor', 'flat', 'EdgeColor', 'none');
+    bh.CData = cmap_fig(idx_c, :);
+
+    yline(M, '--', 'Color', [0.5 0.5 0.5], 'LineWidth', 0.8);
+    xline(0, ':', 'Color', [0.20 0.20 0.20], 'LineWidth', 1.0, 'HandleVisibility', 'off');
+    if ~isempty(iot_min)
+        xline(iot_min, '--', 'Color', [0.55 0.20 0.20], 'LineWidth', 0.8, ...
+            'HandleVisibility', 'off');
+    end
+
+    ylim([0, M * 1.15]);
+    if col == 1, ylabel('Valid sets', 'FontSize', 12); end
+    colormap(ax_w, cmap_fig);
+    caxis(ax_w, [cmin_fig cmax_fig]);
+    set(ax_w, 'FontSize', 12, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8);
+    hold off;
+
+    linkaxes([ax_s ax_w], 'x');
 end
 
-linkaxes(findobj(fig1, 'Type', 'axes'), 'xy');
+linkaxes(findobj(fig1, 'Type', 'axes'), 'x');
 xlim([-pre_s, post_s]);
 
-%% colorbar（最初のタイルに付与）
+%% colorbar（左上の加算平均タイルに付与）
 cb = colorbar(nexttile(tl1, 1), 'eastoutside');
 cb.Label.String = 'Valid sets';
-cb.FontSize = 12;
+cb.FontSize = 11;
 
 %% ============================================================
 %% ブロック重ね合わせ表示
@@ -314,23 +350,6 @@ set(gca, 'FontSize', 16, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8);
 xlim([-pre_s, post_s]);
 hold off;
 
-%% ============================================================
-%% 有効セット数の時間推移
-%% ============================================================
-fig3 = figure('Position', [150 150 900 400]);
-hold on;
-
-mean_n_valid = mean(n_valid_block, 1);   % ブロックごとの平均有効セット数
-bar(1:n_blocks, mean_n_valid, 0.6, 'FaceColor', [0.20 0.45 0.75], 'EdgeColor', 'none');
-yline(M, '--', 'Color', [0.5 0.5 0.5], 'LineWidth', 0.8);
-
-xlabel('Block', 'FontSize', 16);
-ylabel('Mean valid sets', 'FontSize', 16);
-title(sprintf('ブロックごとの平均有効セット数 (M = %d)', M), 'FontSize', 16);
-xlim([0.4, n_blocks+0.6]);
-ylim([0, M*1.1]);
-set(gca, 'FontSize', 14, 'Box', 'off', 'TickDir', 'out', 'LineWidth', 0.8);
-hold off;
 
 %% ============================================================
 %% local functions
